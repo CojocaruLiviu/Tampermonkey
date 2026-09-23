@@ -166,7 +166,7 @@ function checkOldReservations() {
         const btn = document.createElement('button');
         btn.id = 'check-72h-btn';
         btn.type = 'button';
-        btn.textContent = 'Verifică > 72h';
+        btn.textContent = 'Exc Verifică > 72h';
         btn.style.cssText = `
             margin-top: 8px;
             padding: 6px 12px;
