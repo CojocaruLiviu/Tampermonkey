@@ -27,19 +27,26 @@
     }
 
     // Extrage numele agentului din rând
-    function extractAgentName(row) {
-        const tds = row.querySelectorAll('td');
-        for (const td of tds) {
-            const text = td.innerText.trim();
-            for (const name of Object.keys(ALLOWED_USERS)) {
-                if (text.includes(name)) {
-                    return name;
-                }
+// Extrage numele agentului din rând – versiune robustă
+function extractAgentName(row) {
+    const tds = row.querySelectorAll('td');
+
+    for (const td of tds) {
+        // Normalizăm tot textul: înlocuim newline + spații multiple cu un singur spațiu
+        const text = td.innerText
+            .replace(/\s+/g, ' ')
+            .trim()
+            .toUpperCase();          // comparăm case-insensitive
+
+        for (const name of Object.keys(ALLOWED_USERS)) {
+            if (text.includes(name.toUpperCase())) {
+                return name;         // returnăm cheia originală din ALLOWED_USERS
             }
         }
-        return null;
     }
-
+    return null;
+}
+    
     async function sendToTelegram(lines) {
         const text = `⚠️ Rezervări mai vechi de 72 ore cu clarificarea stării cererii\n` +
                      `⚠️ Бронирования старше 72 часов с уточнением статуса запроса (${lines.length}):\n\n` +
@@ -68,65 +75,85 @@
         }
     }
 
-    function checkOldReservations() {
-        const rows = document.querySelectorAll('tr.status_check_mode');
-        const now = new Date();
-        const limitMs = 72 * 60 * 60 * 1000; // 72 ore
-        const oldLines = [];
+function checkOldReservations() {
+    const rows = document.querySelectorAll('tr.status_check_mode');
+    const now = new Date();
+    const limitMs = 72 * 60 * 60 * 1000;
+    const oldLines = [];
 
-        rows.forEach(row => {
-            // 1. Verifică dacă agentul e în lista permisă
-            const agentName = extractAgentName(row);
-            if (!agentName || !ALLOWED_USERS[agentName]) {
-                return;
-            }
-            const username = ALLOWED_USERS[agentName];
+    rows.forEach((row, index) => {
+        // 1. Caută agentul
+        const agentName = extractAgentName(row);
 
-            // 2. Extrage data rezervării
-            const tds = row.querySelectorAll('td');
-            let dateTd = null;
-            for (const td of tds) {
-                if (/\d{2}\.\d{2}\.\d{4}/.test(td.textContent)) {
-                    dateTd = td;
-                    break;
-                }
-            }
-            if (!dateTd) return;
-
-            const lines = dateTd.innerText.trim().split('\n').map(l => l.trim()).filter(Boolean);
-            if (lines.length < 2) return;
-
-            const dateStr = lines[0];
-            const timeStr = lines[1];
-            const reservationDate = parseDateTime(dateStr, timeStr);
-            if (isNaN(reservationDate.getTime())) return;
-
-            const ageMs = now - reservationDate;
-            if (ageMs <= limitMs) return;
-
-            // 3. Extrage link-ul
-            const link = row.querySelector('a[href*="/book/bundle/edit/"]');
-            if (!link) return;
-
-            // Format: link + username  (apare atât în alert cât și în Telegram)
-            oldLines.push(`${link.href} ${username}`);
+        // DEBUG – vezi în Console (F12) ce se întâmplă
+        console.log(`Rând ${index + 1}:`, {
+            agentName,
+            allowed: agentName ? ALLOWED_USERS[agentName] : null,
+            rowText: row.innerText.substring(0, 150)
         });
 
-        if (oldLines.length === 0) {
-            alert('Nu există rezervări mai vechi de 72 de ore pentru utilizatorii din listă.');
+        if (!agentName || !ALLOWED_USERS[agentName]) {
+            return;
+        }
+        const username = ALLOWED_USERS[agentName];
+
+        // 2. Extrage data (prima celulă care conține dd.mm.yyyy)
+        const tds = row.querySelectorAll('td');
+        let dateTd = null;
+        for (const td of tds) {
+            if (/\d{2}\.\d{2}\.\d{4}/.test(td.textContent)) {
+                dateTd = td;
+                break;
+            }
+        }
+        if (!dateTd) {
+            console.log(`Rând ${index + 1}: nu am găsit data`);
             return;
         }
 
-        // ALERT / CONFIRM – afișează link + username
-        const message = `Găsite ${oldLines.length} rezervări mai vechi de 72 de ore:\n\n` +
-                        oldLines.join('\n') +
-                        `\n\n────────────────────\nVrei să le trimiți în grupul Telegram?`;
-
-        const confirmSend = confirm(message);
-        if (confirmSend) {
-            sendToTelegram(oldLines);
+        const lines = dateTd.innerText.trim().split('\n').map(l => l.trim()).filter(Boolean);
+        if (lines.length < 2) {
+            console.log(`Rând ${index + 1}: format dată invalid`, lines);
+            return;
         }
+
+        const dateStr = lines[0];
+        const timeStr = lines[1];
+        const reservationDate = parseDateTime(dateStr, timeStr);
+
+        if (isNaN(reservationDate.getTime())) {
+            console.log(`Rând ${index + 1}: dată invalidă`, dateStr, timeStr);
+            return;
+        }
+
+        const ageMs = now - reservationDate;
+        const ageHours = (ageMs / 3600000).toFixed(1);
+
+        console.log(`Rând ${index + 1}: ${agentName} → ${ageHours} ore`);
+
+        if (ageMs <= limitMs) return;
+
+        // 3. Link
+        const link = row.querySelector('a[href*="/book/bundle/edit/"]');
+        if (!link) return;
+
+        oldLines.push(`${link.href} ${username}`);
+    });
+
+    if (oldLines.length === 0) {
+        alert('Nu există rezervări mai vechi de 72 de ore pentru utilizatorii din listă.\n\nDeschide Console (F12) pentru detalii.');
+        return;
     }
+
+    const message = `Găsite ${oldLines.length} rezervări mai vechi de 72 de ore:\n\n` +
+                    oldLines.join('\n') +
+                    `\n\n────────────────────\nVrei să le trimiți în grupul Telegram?`;
+
+    if (confirm(message)) {
+        sendToTelegram(oldLines);
+    }
+}
+    
 
     function addButton() {
         if (document.getElementById('check-72h-btn')) return;
