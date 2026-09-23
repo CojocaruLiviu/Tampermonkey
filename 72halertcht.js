@@ -26,8 +26,7 @@
     }
 
     async function sendToTelegram(links) {
-        const text = `⚠️ Rezervări mai vechi de 72 ore cu clarificarea stării cererii\n` +
-                     `⚠️ Бронирования старше 72 часов с уточнением статуса запроса (${links.length}):\n\n` +
+        const text = `⚠️ Добрый день, в течение 3 х часов если не будет оплаты на брони, то идёт на аннуляцию (${links.length}):\n\n` +
                      links.join('\n');
 
         const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
