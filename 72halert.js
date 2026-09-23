@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         PandaTur - Check status_check_mode > 72h + Telegram
 // @namespace    http://tampermonkey.net/
-// @version      1.3
-// @description  Verifică rezervările status_check_mode > 72h și oferă opțiunea de a le trimite pe Telegram
+// @version      1.4
+// @description  Verifică rezervările status_check_mode > 72h (doar utilizatori din listă) și oferă opțiunea de a le trimite pe Telegram
 // @author       You
 // @match        https://online.pandatur.md/book/excursion/report*
 // @grant        none
@@ -14,16 +14,38 @@
     const BOT_TOKEN = '8788383248:AAHF99BBMXWGo7XXkpcmFglMrHkxANJYZGU';
     const CHAT_ID  = '-5056055026';
 
+    // Lista de utilizatori permisă: nume → username Telegram
+    const ALLOWED_USERS = {
+        'GRAUR AURELIA': '@aurelua',
+        'STIRBU TRAIAN': '@strain'
+    };
+
     function parseDateTime(dateStr, timeStr) {
         const [day, month, year] = dateStr.trim().split('.').map(Number);
         const [hours, minutes, seconds] = timeStr.trim().split(':').map(Number);
         return new Date(year, month - 1, day, hours, minutes, seconds || 0);
     }
 
-    async function sendToTelegram(links) {
+    // Extrage numele agentului din rând (ultima linie non-goală din celula cu agenție)
+    function extractAgentName(row) {
+        const tds = row.querySelectorAll('td');
+        // Celula cu agenție + agent este de obicei a 6-a (index 5), dar căutăm după conținut
+        for (const td of tds) {
+            const text = td.innerText.trim();
+            // Caută un nume care se potrivește cu lista noastră
+            for (const name of Object.keys(ALLOWED_USERS)) {
+                if (text.includes(name)) {
+                    return name;
+                }
+            }
+        }
+        return null;
+    }
+
+    async function sendToTelegram(lines) {
         const text = `⚠️ Rezervări mai vechi de 72 ore cu clarificarea stării cererii\n` +
-                 `⚠️ Бронирования старше 72 часов с уточнением статуса запроса (${links.length}):\n\n` +
-                 links.join('\n');
+                     `⚠️ Бронирования старше 72 часов с уточнением статуса запроса (${lines.length}):\n\n` +
+                     lines.join('\n');
 
         const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
 
@@ -37,9 +59,7 @@
                     disable_web_page_preview: true
                 })
             });
-
             const data = await response.json();
-
             if (data.ok) {
                 alert('✅ Trimis cu succes în grup!');
             } else {
@@ -54,19 +74,25 @@
         const rows = document.querySelectorAll('tr.status_check_mode');
         const now = new Date();
         const limitMs = 72 * 60 * 60 * 1000; // 72 ore
-        const oldLinks = [];
+        const oldLines = [];
 
         rows.forEach(row => {
+            // 1. Verifică dacă agentul e în lista permisă
+            const agentName = extractAgentName(row);
+            if (!agentName || !ALLOWED_USERS[agentName]) {
+                return; // sare peste dacă nu e în listă
+            }
+            const username = ALLOWED_USERS[agentName];
+
+            // 2. Extrage data rezervării
             const tds = row.querySelectorAll('td');
             let dateTd = null;
-
             for (const td of tds) {
                 if (/\d{2}\.\d{2}\.\d{4}/.test(td.textContent)) {
                     dateTd = td;
                     break;
                 }
             }
-
             if (!dateTd) return;
 
             const lines = dateTd.innerText.trim().split('\n').map(l => l.trim()).filter(Boolean);
@@ -74,40 +100,38 @@
 
             const dateStr = lines[0];
             const timeStr = lines[1];
-
             const reservationDate = parseDateTime(dateStr, timeStr);
             if (isNaN(reservationDate.getTime())) return;
 
             const ageMs = now - reservationDate;
+            if (ageMs <= limitMs) return; // nu e mai veche de 72h
 
-            if (ageMs > limitMs) {
-                const link = row.querySelector('a[href*="/book/bundle/edit/"]');
-                if (link) {
-                    oldLinks.push(link.href);
-                }
-            }
+            // 3. Extrage link-ul
+            const link = row.querySelector('a[href*="/book/bundle/edit/"]');
+            if (!link) return;
+
+            // Format final: link + username
+            oldLines.push(`${link.href} ${username}`);
         });
 
-        if (oldLinks.length === 0) {
-            alert('Nu există rezervări mai vechi de 72 de ore.');
+        if (oldLines.length === 0) {
+            alert('Nu există rezervări mai vechi de 72 de ore pentru utilizatorii din listă.');
             return;
         }
 
-        const message = `Găsite ${oldLinks.length} rezervări mai vechi de 72 de ore:\n\n` +
-                        oldLinks.join('\n') +
+        const message = `Găsite ${oldLines.length} rezervări mai vechi de 72 de ore (utilizatori din listă):\n\n` +
+                        oldLines.join('\n') +
                         `\n\n────────────────────\nVrei să le trimiți în grupul Telegram?`;
 
         const confirmSend = confirm(message);
-
         if (confirmSend) {
-            sendToTelegram(oldLinks);
+            sendToTelegram(oldLines);
         }
     }
 
     function addButton() {
         if (document.getElementById('check-72h-btn')) return;
 
-        // Caută secțiunea "Intervalul cererilor"
         const dateInputs = document.querySelector('#from_order') || document.querySelector('input[name="filter[from_order]"]');
         if (!dateInputs) return;
 
@@ -115,7 +139,7 @@
 
         const btn = document.createElement('button');
         btn.id = 'check-72h-btn';
-        btn.type = 'button'; // important - să nu trimită formularul
+        btn.type = 'button';
         btn.textContent = 'Verifică > 72h';
         btn.style.cssText = `
             margin-top: 8px;
@@ -133,7 +157,6 @@
         btn.onmouseout  = () => btn.style.background = '#e67e22';
         btn.onclick = checkOldReservations;
 
-        // Adaugă butonul sub câmpurile de dată
         formGroup.appendChild(btn);
     }
 
