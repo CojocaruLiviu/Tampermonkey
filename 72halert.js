@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         PandaTur - Check status_check_mode > 72h + Telegram
 // @namespace    http://tampermonkey.net/
-// @version      1.4
+// @version      1.5
 // @description  Verifică rezervările status_check_mode > 72h (doar utilizatori din listă) și oferă opțiunea de a le trimite pe Telegram
 // @author       You
 // @match        https://online.pandatur.md/book/excursion/report*
@@ -26,13 +26,11 @@
         return new Date(year, month - 1, day, hours, minutes, seconds || 0);
     }
 
-    // Extrage numele agentului din rând (ultima linie non-goală din celula cu agenție)
+    // Extrage numele agentului din rând
     function extractAgentName(row) {
         const tds = row.querySelectorAll('td');
-        // Celula cu agenție + agent este de obicei a 6-a (index 5), dar căutăm după conținut
         for (const td of tds) {
             const text = td.innerText.trim();
-            // Caută un nume care se potrivește cu lista noastră
             for (const name of Object.keys(ALLOWED_USERS)) {
                 if (text.includes(name)) {
                     return name;
@@ -80,7 +78,7 @@
             // 1. Verifică dacă agentul e în lista permisă
             const agentName = extractAgentName(row);
             if (!agentName || !ALLOWED_USERS[agentName]) {
-                return; // sare peste dacă nu e în listă
+                return;
             }
             const username = ALLOWED_USERS[agentName];
 
@@ -104,13 +102,13 @@
             if (isNaN(reservationDate.getTime())) return;
 
             const ageMs = now - reservationDate;
-            if (ageMs <= limitMs) return; // nu e mai veche de 72h
+            if (ageMs <= limitMs) return;
 
             // 3. Extrage link-ul
             const link = row.querySelector('a[href*="/book/bundle/edit/"]');
             if (!link) return;
 
-            // Format final: link + username
+            // Format: link + username  (apare atât în alert cât și în Telegram)
             oldLines.push(`${link.href} ${username}`);
         });
 
@@ -119,7 +117,8 @@
             return;
         }
 
-        const message = `Găsite ${oldLines.length} rezervări mai vechi de 72 de ore (utilizatori din listă):\n\n` +
+        // ALERT / CONFIRM – afișează link + username
+        const message = `Găsite ${oldLines.length} rezervări mai vechi de 72 de ore:\n\n` +
                         oldLines.join('\n') +
                         `\n\n────────────────────\nVrei să le trimiți în grupul Telegram?`;
 
@@ -166,7 +165,6 @@
         addButton();
     }
 
-    // Reîncearcă după un scurt delay (formularul se poate încărca mai târziu)
     setTimeout(addButton, 1500);
     setTimeout(addButton, 3000);
 })();
